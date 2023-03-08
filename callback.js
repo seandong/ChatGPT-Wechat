@@ -23,7 +23,8 @@ const UNSUPPORTED_MESSAGE_TYPES = {
   news: '暂不支持图文消息',
 }
 
-const THINK_MESSAGE = `思考中 ... \n\n请稍等几秒后回复【1】查看回复`
+const WAIT_MESSAGE = `思考中 ... \n\n请稍等几秒后回复【1】查看回复`
+const NO_MESSAGE = `没有要回复的内容，可能还在思考中，请稍等几秒后回复【1】再试`
 const CLEAR_MESSAGE = `✅ 记忆已清除`
 const HELP_MESSAGE = `ChatGPT 指令使用指南
 
@@ -147,10 +148,10 @@ async function replyText(sessionId, { MsgId: msgid, Content: content }) {
   if (question === '1') {
     const message = await Message.where({ sessionId }).sort({createdAt: -1}).findOne();
     if (message) {
-      return message.answer;
+      return `Q: ${message.question}\n------------\n${message.answer}`;
     }
 
-    return HELP_MESSAGE;
+    return NO_MESSAGE;
   }
 
   // 发送指令
@@ -223,12 +224,20 @@ module.exports = async function(params, context) {
   if (message.MsgType === 'text') {
     const sessionId = message.FromUserName;
 
-    // 如果 5 秒 OpenAI 没有回复，则直接返回默认消息
+    // 解决请求响应超时问题：如果 5 秒内 AI 没有回复，则返回等待消息
     const content = await Promise.race([
-      sleep(4500.0).then(() => THINK_MESSAGE),
+      sleep(4500.0).then(() => WAIT_MESSAGE),
       replyText(sessionId, message)
     ])
     return responseText(message, content);
+  }
+
+  // 处理微信事件
+  if (message.MsgType === 'event') {
+    // 公众号订阅
+    if (message.Event === 'subscribe') {
+      return responseText(message, HELP_MESSAGE);
+    }
   }
 
   // 处理暂不支持的消息类型
