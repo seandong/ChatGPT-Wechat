@@ -166,11 +166,10 @@ async function replyText(sessionId, { MsgId: msgid, Content: content }) {
     return error;
   }
 
-  console.debug(`sessionId: ${sessionId}; question: ${question}; answer: ${answer}`);
-
   // 保存消息
   const token = question.length + answer.length
-  await Message.save({ sessionId, msgid, question, answer, token, });
+  const result = await Message.save({ sessionId, msgid, question, answer, token });
+  console.debug(`[save message] result: ${result}; sessionId: ${sessionId}; question: ${question}; answer: ${answer}`);
 
   return answer;
 }
@@ -223,8 +222,10 @@ module.exports = async function(params, context) {
   // 处理文本消息
   if (message.MsgType === 'text') {
     const sessionId = message.FromUserName;
+
+    // 如果 4 秒内 AI 没有回复，则直接返回默认消息
     const content = await Promise.race([
-      sleep(2800.0).then(() => THINK_MESSAGE),
+      sleep(4000.0).then(() => THINK_MESSAGE),
       replyText(sessionId, message)
     ])
     return responseText(message, content);
