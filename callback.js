@@ -136,7 +136,7 @@ async function fetchOpenAIReply(prompt) {
 }
 
 // 处理文本回复消息
-async function replyText(sessionId, { FromUserName: fromUser, MsgId: msgid, Content: content }) {
+async function replyText(sessionId, { MsgId: msgid, Content: content }) {
   const question = content.trim()
 
   // 发送指令
