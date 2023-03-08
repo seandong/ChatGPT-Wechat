@@ -1,4 +1,7 @@
 # ChatGPT-Wechat
-微信公众号 ChatGPT 机器人 Inspired by [ChatGPT-Feishu](https://github.com/bestony/ChatGPT-Feishu)
+Inspired by [ChatGPT-Feishu](https://github.com/bestony/ChatGPT-Feishu)
 
-开发中 ...
+微信公众号 ChatGPT 机器人
+
+
+> 正在开发中 ...
