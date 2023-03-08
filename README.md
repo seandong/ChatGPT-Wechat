@@ -6,7 +6,7 @@ Inspired by [ChatGPT-Feishu](https://github.com/bestony/ChatGPT-Feishu)
 
 ## 效果
 
-<img src="https://user-images.githubusercontent.com/758427/223659506-2b7da417-c7da-4a13-ac2f-b4b7769e091e.png" width="300" />
+<img width="447" alt="image" src="https://user-images.githubusercontent.com/758427/223767480-e5dd6099-395a-498e-9197-27ee22fb9402.png">
 
 
 ## 如何使用？
