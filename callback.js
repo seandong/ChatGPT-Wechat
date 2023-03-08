@@ -23,10 +23,12 @@ const UNSUPPORTED_MESSAGE_TYPES = {
   news: '暂不支持图文消息',
 }
 
+const THINK_MESSAGE = `思考中 ... \n\n请稍等几秒后回复【1】查看回复`
 const CLEAR_MESSAGE = `✅ 记忆已清除`
 const HELP_MESSAGE = `ChatGPT 指令使用指南
 
 Usage:
+    1         查看上个问题的回复
     /clear    清除上下文
     /help     获取更多帮助
   `
@@ -34,6 +36,8 @@ Usage:
 const Message = db.table('messages')
 const Event = db.table('events')
 
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function responseText({ FromUserName, ToUserName}, content) {
   const timestamp = Date.now();
@@ -96,7 +100,7 @@ async function buildOpenAIPrompt(sessionId, question) {
 
 
 // 获取 OpenAI API 的回复
-async function fetchOpenAIReply(prompt) {
+async function getOpenAIReply(prompt) {
   const data = JSON.stringify({
     model: OPENAI_MODEL,
     messages: prompt
@@ -139,6 +143,16 @@ async function fetchOpenAIReply(prompt) {
 async function replyText(sessionId, { MsgId: msgid, Content: content }) {
   const question = content.trim()
 
+  // 检查是否是重试操作
+  if (question === '1') {
+    const message = await Message.where({ sessionId }).sort({createdAt: -1}).findOne();
+    if (message) {
+      return message.answer;
+    }
+
+    return HELP_MESSAGE;
+  }
+
   // 发送指令
   if (question.startsWith('/')) {
     return await processCMD(sessionId, msgid, question);
@@ -146,7 +160,7 @@ async function replyText(sessionId, { MsgId: msgid, Content: content }) {
 
   // 回复内容
   const prompt = await buildOpenAIPrompt(sessionId, question);
-  const { error, answer } = await fetchOpenAIReply(prompt);
+  const { error, answer } = await getOpenAIReply(prompt);
   if (error) {
     console.error(`sessionId: ${sessionId}; question: ${question}; error: ${error}`);
     return error;
@@ -165,12 +179,12 @@ async function replyText(sessionId, { MsgId: msgid, Content: content }) {
 // 验证是否重复的推送事件
 async function duplicateEvent(message) {
   const { MsgId: eventId } = message;
-  const count = await Event.where({ event_id: eventId }).count();
+  const count = await Event.where({ eventId }).count();
   if (count != 0) {
     return true;
   }
 
-  await Event.save({ event_id: eventId, message: message });
+  await Event.save({ eventId, message });
   return false;
 }
 
@@ -203,23 +217,16 @@ module.exports = async function(params, context) {
   // 验证是否为重复推送事件
   if (await duplicateEvent(message)) {
     console.debug(`[${requestId}] duplicate message: `, message);
-
-    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-    // 尝试检查 10 次历史消息是否已处理完
-    for (let i=0; i < 10; i++) {
-      const _message = await Message.where({ msgid: message.MsgId }).sort({ createdAt: -1 }).findOne();
-      if (_message) {
-        return responseText(message, _message.answer)
-      }
-      await sleep(500.0)
-    }
+    return '';
   }
 
   // 处理文本消息
   if (message.MsgType === 'text') {
     const sessionId = message.FromUserName;
-    const content = await replyText(sessionId, message);
+    const content = await Promise.race([
+      sleep(2800.0).then(() => THINK_MESSAGE),
+      replyText(sessionId, message)
+    ])
     return responseText(message, content);
   }
 
