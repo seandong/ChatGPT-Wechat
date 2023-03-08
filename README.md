@@ -31,14 +31,14 @@ Inspired by [ChatGPT-Feishu](https://github.com/bestony/ChatGPT-Feishu)
 
 <img width="1200" alt="image" src="https://user-images.githubusercontent.com/758427/223665655-fa9ee980-8912-4415-af02-e9714ecc24b9.png">
 
-把代码粘贴到 AirCode 默认创建的 hello.js 。然后页面点击顶部的【Deploy】，完成第一次部署。
+把代码粘贴到 AirCode 默认创建的 hello.js 。
 
 <img width="1200" alt="image" src="https://user-images.githubusercontent.com/758427/223667199-ca3f97cf-3269-496a-ad59-62a6e4d8e4bf.png">
 
 
 ### 3. 安装 AirCode 项目所需依赖
 
-点击页面左下角的包管理器，搜索并安装 `axios`、`sha1` 和 `xml2js` 依赖包。安装完成后，点击页面上方的部署【Deploy】，使其生效。
+点击页面左下角的包管理器，搜索并安装 `axios`、`sha1` 和 `xml2js` 依赖包。
 
 <img width="1200" alt="image" src="https://user-images.githubusercontent.com/758427/223668155-9448841f-6e2b-42e4-8c36-399c3ebd93e0.png">
 
