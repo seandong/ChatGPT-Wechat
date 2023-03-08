@@ -223,9 +223,9 @@ module.exports = async function(params, context) {
   if (message.MsgType === 'text') {
     const sessionId = message.FromUserName;
 
-    // 如果 4 秒内 AI 没有回复，则直接返回默认消息
+    // 如果 5 秒 OpenAI 没有回复，则直接返回默认消息
     const content = await Promise.race([
-      sleep(4000.0).then(() => THINK_MESSAGE),
+      sleep(4500.0).then(() => THINK_MESSAGE),
       replyText(sessionId, message)
     ])
     return responseText(message, content);
