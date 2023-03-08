@@ -1,5 +1,5 @@
 // @see https://docs.aircode.io/guide/functions/
-const aircode = require('aircode');
+const { db } = require('aircode');
 const axios = require('axios');
 const sha1 = require('sha1');
 const xml2js = require('xml2js');
@@ -11,6 +11,9 @@ const ENCODING_AES_KEY = process.env.ENCODING_AES_KEY || ''
 const OPENAI_KEY = process.env.OPENAI_KEY || ""; // OpenAI 的 Key
 const OPENAI_MODEL = process.env.MODEL || "gpt-3.5-turbo"; // 使用的模型
 const OPENAI_MAX_TOKEN = process.env.MAX_TOKEN || 1024; // 最大 token 的值
+
+const LIMIT_HISTORY_MESSAGES = 50 // 限制历史会话最大条数
+const ADJACENT_MESSAGE_MAX_INTERVAL_TIME = 5 * 60 * 1000 //相邻两条消息的最大间隔时间
 
 const UNSUPPORTED_MESSAGE_TYPES = {
   image: '暂不支持图片消息',
@@ -28,16 +31,16 @@ Usage:
     /help     获取更多帮助
   `
 
-const Message = aircode.db.table('messages')
-const Event = aircode.db.table('events')
+const Message = db.table('messages')
+const Event = db.table('events')
 
 
-function responseText({ FromUserName: to, ToUserName: from }, content) {
+function responseText({ FromUserName, ToUserName}, content) {
   const timestamp = Date.now();
   return `
   <xml>
-    <ToUserName><![CDATA[${to}]]></ToUserName>
-    <FromUserName><![CDATA[${from}]]></FromUserName>
+    <ToUserName><![CDATA[${FromUserName}]]></ToUserName>
+    <FromUserName><![CDATA[${ToUserName}]]></FromUserName>
     <CreateTime>${timestamp}</CreateTime>
     <MsgType><![CDATA[text]]></MsgType>
     <Content><![CDATA[${content}]]></Content>
@@ -46,61 +49,60 @@ function responseText({ FromUserName: to, ToUserName: from }, content) {
 }
 
 
-async function processCMD(msgid, fromUser, question) {
-  let content;
-
-  //TODO: 清理历史消息
+async function processCMD(sessionId, msgid, question) {
+  // 清理历史会话
   if (question === '/clear') {
-    content = CLEAR_MESSAGE;
+    const now = new Date();
+    await Message.where({ sessionId }).set({ deletedAt: now }).save()
+    return CLEAR_MESSAGE;
   }
   else {
-    content = HELP_MESSAGE;
+    return HELP_MESSAGE;
   }
-  return content;
 }
 
-async function buildPrompt(msgid, fromUser, question) {
-  const messages = await Message.where({ from_user: fromUser }).find();
 
-  // {"role": "system", "content": "You are a helpful assistant."},
-  return messages.map(conversation => ({
-    role: 'user',
-    content: conversation.question,
-  })).concat({ role: 'user', content: question });
-}
+// 构建 prompt
+async function buildOpenAIPrompt(sessionId, question) {
+  let prompt = [];
 
-// 保存用户会话
-async function saveMessage(msgid, fromUser, question, answer) {
-  const token = question.length + answer.length
-  const result = await Message.save({
-    msgid,
-    question,
-    answer,
-    token,
-    from_user: fromUser,
-  });
-  if (result) {
-    // 如果历史会话记录大于OPENAI_MAX_TOKEN，则从第一条开始抛弃超过限制的对话
-    let total = 0;
-    const historyMessages = await Message.where({ from_user: fromUser }).sort({ createdAt: -1 }).find();
-    for (const { _id, token } of historyMessages) {
-      if (total > OPENAI_MAX_TOKEN) {
-        await Message.where({ _id }).delete();
-      }
-      total += token;
+  // 获取最近 1 小时内的历史会话
+  const now = new Date();
+  const earliestAt = new Date(now.getTime() - (60 * 60 * 1000))
+  const historyMessages = await Message.where({
+    sessionId,
+    deletedAt: db.exists(false),
+    createdAt: db.gt(earliestAt),
+  }).sort({ createdAt: -1 }).limit(LIMIT_HISTORY_MESSAGES).find();
+
+  let lastMessageTime = now;
+  let tokenSize = 0;
+  for (const message of historyMessages) {
+    // 如果历史会话记录大于 OPENAI_MAX_TOKEN 或 两次会话间隔超过 10 分钟，则停止添加历史会话
+    const timeSinceLastMessage = lastMessageTime ? lastMessageTime - message.createdAt : 0;
+    if (tokenSize > OPENAI_MAX_TOKEN || timeSinceLastMessage > ADJACENT_MESSAGE_MAX_INTERVAL_TIME) {
+      break
     }
+
+    prompt.unshift({ role: 'assistant', content: message.answer, });
+    prompt.unshift({ role: 'user', content: message.question, });
+    tokenSize += message.token;
+    lastMessageTime = message.createdAt;
   }
+
+  prompt.push({ role: 'user', content: question });
+  return prompt;
 }
 
 
-// 获取 OpenAI API 答案
-async function fetchOpenAIAnswer(prompt) {
-  var data = JSON.stringify({
+// 获取 OpenAI API 的回复
+async function fetchOpenAIReply(prompt) {
+  const data = JSON.stringify({
     model: OPENAI_MODEL,
     messages: prompt
   });
 
-  var config = {
+  const config = {
     method: 'post',
     maxBodyLength: Infinity,
     url: 'https://api.openai.com/v1/chat/completions',
@@ -115,35 +117,52 @@ async function fetchOpenAIAnswer(prompt) {
   try {
       const response = await axios(config);
       if (response.status === 429) {
-        return '问题太多了，我有点眩晕，请稍后再试';
+        console.error(response.data);
+        return {
+          error: '问题太多了，我有点眩晕，请稍后再试'
+        }
       }
       // 去除多余的换行
-      return response.data.choices[0].message.content.replace("\n\n", "");
-
+      return {
+        answer: response.data.choices[0].message.content.replace("\n\n", ""),
+      }
   } catch(e){
      console.error(e.response.data)
-     return "问题太难了 出错了. (uДu〃).";
+     return {
+      error: "问题太难了 出错了. (uДu〃).",
+    }
   }
 
 }
 
 // 处理文本回复消息
-async function replyText(requestId, { FromUserName: fromUser, MsgId: msgid, Content: content }) {
+async function replyText(sessionId, { FromUserName: fromUser, MsgId: msgid, Content: content }) {
   const question = content.trim()
 
   // 发送指令
   if (question.startsWith('/')) {
-    return processCMD(msgid, fromUser, question);
+    return await processCMD(sessionId, msgid, question);
   }
 
-  const prompt = await buildPrompt(msgid, fromUser, question);
-  const answer = await fetchOpenAIAnswer(prompt);
-  await saveMessage(msgid, fromUser, question, answer);
-  console.debug(`[${requestId}] question: ${question};  answer: ${answer}`);
+  // 回复内容
+  const prompt = await buildOpenAIPrompt(sessionId, question);
+  const { error, answer } = await fetchOpenAIReply(prompt);
+  if (error) {
+    console.error(`sessionId: ${sessionId}; question: ${question}; error: ${error}`);
+    return error;
+  }
+
+  console.debug(`sessionId: ${sessionId}; question: ${question}; answer: ${answer}`);
+
+  // 保存消息
+  const token = question.length + answer.length
+  await Message.save({ sessionId, msgid, question, answer, token, });
+
   return answer;
 }
 
 
+// 验证是否重复的推送事件
 async function duplicateEvent(message) {
   const { MsgId: eventId } = message;
   const count = await Event.where({ event_id: eventId }).count();
@@ -173,6 +192,10 @@ module.exports = async function(params, context) {
   // 解析 XML 数据
   let message;
   xml2js.parseString(params, { explicitArray: false }, function(err, result) {
+    if (err) {
+      console.error(`[${requestId}] parse xml error: `, err);
+      return
+    }
     message = result.xml
   })
   console.log(`[${requestId}] message: `, message);
@@ -195,11 +218,12 @@ module.exports = async function(params, context) {
 
   // 处理文本消息
   if (message.MsgType === 'text') {
-    const content = await replyText(requestId, message);
+    const sessionId = message.FromUserName;
+    const content = await replyText(sessionId, message);
     return responseText(message, content);
   }
 
-  // 暂不支持的消息
+  // 处理暂不支持的消息类型
   if (message.MsgType in UNSUPPORTED_MESSAGE_TYPES) {
     return responseText(
       message,
